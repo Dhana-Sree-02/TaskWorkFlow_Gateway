@@ -63,5 +63,6 @@ app.include_router(AuthenticationRouter)
 app.include_router(TaskRouter)
 
 @app.get("/")
+@app.head("/")
 def home():
     return "Started...."
