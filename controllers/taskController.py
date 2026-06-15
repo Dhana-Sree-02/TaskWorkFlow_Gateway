@@ -106,8 +106,8 @@ async def create_task(
     current_user: dict = Depends(get_current_user),
     Token: str = Header(..., alias="Token")
 ):
-    if current_user["role"] != 2:
-        raise HTTPException(status_code=403, detail="Access denied. Only administrators can create tasks.")
+    if current_user["role"] not in [2, 3]:
+        raise HTTPException(status_code=403, detail="Access denied. Only managers and administrators can create tasks.")
 
     user_obj = await get_user_profile(Token)
 
@@ -115,7 +115,8 @@ async def create_task(
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{SPRING_URL}/api/tasks",
-            json=payload.model_dump()
+            json=payload.model_dump(),
+            timeout=5.0
         )
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=response.text)
@@ -124,54 +125,65 @@ async def create_task(
     task_id = spring_res.get("task_id")
     assigned_user_name = spring_res.get("assigned_user_name", "Unassigned")
 
-    # 2. Write MongoDB task_logs
-    log_payload = {
-        "task_id": task_id,
-        "action": "Task Created",
-        "old_status": None,
-        "new_status": "Backlog",
-        "assigned_user": assigned_user_name,
-        "updated_by": user_obj.get("fullname", "Admin")
-    }
-    async with httpx.AsyncClient() as client:
-        await client.post(f"{NODE_URL}/api/logs", json=log_payload)
-
-    # 3. Generate text embedding and store in MongoDB
-    combined_text = f"Title: {payload.title} | Description: {payload.description or ''} | Comments: "
-    vector = get_embedding(combined_text)
-    embedding_payload = {
-        "task_id": task_id,
-        "embedding": vector,
-        "text": combined_text
-    }
-    async with httpx.AsyncClient() as client:
-        await client.post(f"{NODE_URL}/api/embeddings", json=embedding_payload)
-
-    # 4. Fetch the created task from Spring Boot and sync with MongoDB tasks collection
-    async with httpx.AsyncClient() as client:
-        tasks_res = await client.get(
-            f"{SPRING_URL}/api/tasks",
-            headers={
-                "X-User-Id": str(user_obj.get("id")),
-                "X-User-Role": str(current_user["role"])
-            }
-        )
-        tasks_list = tasks_res.json()
-        new_task_details = next((t for t in tasks_list if t["task_id"] == task_id), None)
-
-    if new_task_details:
-        mongo_task_payload = {
+    # 2. Write MongoDB task_logs (non-blocking / error-resilient)
+    try:
+        log_payload = {
             "task_id": task_id,
-            "title": new_task_details["title"],
-            "description": new_task_details["description"],
-            "due_date": new_task_details["due_date"],
-            "current_stage": new_task_details["current_stage"],
-            "assigned_to": new_task_details["assigned_to"]
+            "action": "Task Created",
+            "old_status": None,
+            "new_status": "Backlog",
+            "assigned_user": assigned_user_name,
+            "updated_by": user_obj.get("fullname", "Admin")
         }
         async with httpx.AsyncClient() as client:
-            await client.post(f"{NODE_URL}/api/mongodb/tasks", json=mongo_task_payload)
+            await client.post(f"{NODE_URL}/api/logs", json=log_payload, timeout=2.0)
+    except Exception as e:
+        print(f"Warning: Failed to log task creation to NoSQL: {e}")
+
+    # 3. Generate text embedding and store in MongoDB (non-blocking / error-resilient)
+    try:
+        combined_text = f"Title: {payload.title} | Description: {payload.description or ''} | Comments: "
+        vector = get_embedding(combined_text)
+        embedding_payload = {
+            "task_id": task_id,
+            "embedding": vector,
+            "text": combined_text
+        }
+        async with httpx.AsyncClient() as client:
+            await client.post(f"{NODE_URL}/api/embeddings", json=embedding_payload, timeout=2.0)
+    except Exception as e:
+        print(f"Warning: Failed to save task embeddings to NoSQL: {e}")
+
+    # 4. Fetch the created task from Spring Boot and sync with MongoDB tasks collection (non-blocking)
+    try:
+        async with httpx.AsyncClient() as client:
+            tasks_res = await client.get(
+                f"{SPRING_URL}/api/tasks",
+                headers={
+                    "X-User-Id": str(user_obj.get("id")),
+                    "X-User-Role": str(current_user["role"])
+                },
+                timeout=5.0
+            )
+            tasks_list = tasks_res.json()
+            new_task_details = next((t for t in tasks_list if t["task_id"] == task_id), None)
+
+        if new_task_details:
+            mongo_task_payload = {
+                "task_id": task_id,
+                "title": new_task_details["title"],
+                "description": new_task_details["description"],
+                "due_date": new_task_details["due_date"],
+                "current_stage": new_task_details["current_stage"],
+                "assigned_to": new_task_details["assigned_to"]
+            }
+            async with httpx.AsyncClient() as client:
+                await client.post(f"{NODE_URL}/api/mongodb/tasks", json=mongo_task_payload, timeout=2.0)
+    except Exception as e:
+        print(f"Warning: Failed to sync task metadata to NoSQL: {e}")
 
     return {"message": "Task created successfully.", "task_id": task_id}
+
 
 @router.put("/tasks/{id}")
 async def update_task(
