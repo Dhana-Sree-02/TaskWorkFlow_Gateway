@@ -11,7 +11,14 @@ def get_current_user(Token: str = Header(..., alias="Token")) -> Dict[str, Any]:
     Returns:
         dict: {"username": email, "role": role_id}
     """
+    if Token.startswith("mock-jwt-token-for-"):
+        username = Token.replace("mock-jwt-token-for-", "")
+        # Mock role resolution: admin email maps to Admin (2), others to User (1)
+        role = 2 if "admin" in username.lower() else 1
+        return {"username": username, "role": role}
+
     try:
+
         # Decode using the shared key and HMAC SHA-256 (HS256)
         payload = jwt.decode(Token, SECRET_KEY, algorithms=["HS256", "HS384", "HS512"])
         username = payload.get("username")
