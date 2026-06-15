@@ -24,11 +24,13 @@ try:
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (1, 3) ON CONFLICT DO NOTHING"))
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (1, 5) ON CONFLICT DO NOTHING"))
         
-        # Seed Role Mapping for Administrator (role 2) -> mid 1, 3, 4, 5
+        # Seed Role Mapping for Administrator (role 2) -> mid 1, 2, 3, 4, 5
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (2, 1) ON CONFLICT DO NOTHING"))
+        conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (2, 2) ON CONFLICT DO NOTHING"))
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (2, 3) ON CONFLICT DO NOTHING"))
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (2, 4) ON CONFLICT DO NOTHING"))
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (2, 5) ON CONFLICT DO NOTHING"))
+
         
         # Seed Role Mapping for Manager (role 3) -> mid 1, 2, 3, 5
         conn.execute(text("INSERT INTO roles_mapping (role, mid) VALUES (3, 1) ON CONFLICT DO NOTHING"))
